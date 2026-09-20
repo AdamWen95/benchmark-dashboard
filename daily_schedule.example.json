@@ -1,0 +1,11 @@
+{
+  "schema_version": "daily-schedule-v1",
+  "timezone": "Asia/Shanghai",
+  "daily_time": "09:00",
+  "starts_on": "2026-01-01",
+  "scope_prefix": "daily-example",
+  "collection_max_attempts": 1,
+  "analysis_max_attempts": 1,
+  "analysis_only_on_change": true,
+  "retry_failed": false
+}

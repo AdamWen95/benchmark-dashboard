@@ -1,0 +1,31 @@
+[Unit]
+Description=Benchmark dashboard daily collection and briefing
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=benchmark-dashboard
+Group=benchmark-dashboard
+WorkingDirectory=/opt/benchmark-dashboard
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/benchmark-dashboard/.venv/bin/python /opt/benchmark-dashboard/scripts/run_scheduled_daily.py --execute
+Restart=no
+TimeoutStartSec=30min
+TimeoutStopSec=30s
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/benchmark-dashboard/data
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=benchmark-dashboard-daily

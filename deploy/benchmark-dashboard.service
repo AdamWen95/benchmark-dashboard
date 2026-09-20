@@ -1,0 +1,37 @@
+[Unit]
+Description=Benchmark dashboard intranet read-only web service
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=benchmark-dashboard
+Group=benchmark-dashboard
+WorkingDirectory=/opt/benchmark-dashboard
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/benchmark-dashboard/.venv/bin/python -m streamlit run /opt/benchmark-dashboard/app.py \
+    --server.address=127.0.0.1 --server.port=8503 \
+    --browser.serverAddress=127.0.0.1 --browser.serverPort=8503 \
+    --server.headless=true --server.fileWatcherType=none \
+    --server.enableCORS=true --server.enableXsrfProtection=true \
+    --server.enableStaticServing=false --browser.gatherUsageStats=false \
+    --client.showErrorDetails=none --client.toolbarMode=viewer
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadOnlyPaths=/opt/benchmark-dashboard/data
+InaccessiblePaths=-/opt/benchmark-dashboard/.env
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=benchmark-dashboard
+
+[Install]
+WantedBy=multi-user.target

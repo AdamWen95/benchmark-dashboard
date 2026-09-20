@@ -1,0 +1,73 @@
+# Local secrets (keep the empty configuration template trackable)
+.env
+.env.*
+*.env
+!.env.example
+.streamlit/secrets.toml
+secrets/
+credentials/
+secrets*.json
+credentials*.json
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Project-local Python environment and generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Local data, API snapshots, SQLite databases and logs
+data/
+logs/
+*.log
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Local reports include real API data, AI briefings and browser screenshots.
+# Keep these artifacts on disk; publish only separately reviewed examples.
+/reports/
+
+# Internal development task briefs and deployment backups
+/benchmark-dashboard*_Codex.md
+/docs/server_*.md
+/docs/M3_runbook.md
+/scripts/repair_test_deployment.py
+# Runtime switches and request scopes belong to the local deployment.
+/daily_config.json
+/daily_schedule.json
+/.deployment-backups/
+/.deployment-repair-*
+
+# Test, tool and application caches
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.streamlit/cache/
+.playwright-cli/
+test-results/
+playwright-report/
+
+# Editor temporary files and local backups
+*.swp
+*.swo
+*~
+*.bak
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini

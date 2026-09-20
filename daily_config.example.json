@@ -1,0 +1,5 @@
+{
+  "enabled": false,
+  "timezone": "Asia/Shanghai",
+  "output_directory": "data/daily_runs"
+}
