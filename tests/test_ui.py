@@ -205,6 +205,37 @@ def test_failed_update_preserves_old_data_and_redacts_errors(monkeypatch, dashbo
     assert not app.exception
 
 
+@pytest.mark.parametrize(('error_code', 'safe_message'), [
+    ('authentication_failed', '鉴权失败'),
+    ('SYNTHETIC_DO_NOT_RENDER_SECRET', '本次采集未成功'),
+])
+def test_first_failed_collection_is_visible_outside_expanders(monkeypatch, error_code, safe_message):
+    state = {
+        'records': [], 'snapshot': None, 'last_success': None, 'snapshot_count': 0,
+        'metric_paths': [], 'latest_attempt': {
+            'status': 'failed', 'error_code': error_code,
+            'message': 'SYNTHETIC_DO_NOT_RENDER_SECRET',
+        },
+    }
+    app = start_app(monkeypatch, state)
+
+    def visible_alerts(block):
+        alerts = []
+        for child in getattr(block, 'children', {}).values():
+            if child.type == 'expander':
+                continue
+            if child.type in {'error', 'warning'}:
+                alerts.append(child.value)
+            alerts.extend(visible_alerts(child))
+        return alerts
+
+    alerts = visible_alerts(app.main)
+    assert any('采集失败' in message and '尚无有效数据' in message
+               and safe_message in message for message in alerts)
+    assert 'SYNTHETIC_DO_NOT_RENDER_SECRET' not in rendered_text(app)
+    assert not app.exception
+
+
 @pytest.mark.parametrize(('error_code', 'message'), [
     ('authentication_failed', '鉴权失败'), ('rate_limited', '请求限流'),
     ('timeout', '请求超时'), ('network_error', '网络连接失败'),

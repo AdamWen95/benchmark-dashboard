@@ -245,19 +245,28 @@ def build_overview_html(records: list[dict], metric_paths: list[str], assessment
             cells.append(f'<td class="{cell_class}">{escape(str(value))}</td>')
         rows.append('<tr>' + ''.join(cells) + '</tr>')
     return '''<style>
-.bd-overview-scroll {overflow:auto; max-height:640px; border:1px solid #DDE3EC;
-    border-radius:8px; width:100%;}
+.bd-overview-scroll {overflow:auto; max-height:640px; border:1px solid #E3E9F2;
+    border-radius:12px; width:100%; background:#FFFFFF;}
 .bd-overview {border-collapse:separate; border-spacing:0; min-width:100%;
-    font-size:14px; line-height:1.45; color:#17263B;}
-.bd-overview th {position:sticky; top:0; z-index:1; background:#F3F6FA;
-    font-weight:600; text-align:left; min-width:115px; max-width:170px;}
-.bd-overview th, .bd-overview td {padding:10px 12px; border-bottom:1px solid #E7EBF1;
+    font-size:13px; line-height:1.6; color:#243650;}
+.bd-overview th {position:sticky; top:0; z-index:2; background:#F3F6FB;
+    color:#5B6D85; font-size:12px; font-weight:600; text-align:left; min-width:120px; max-width:180px;}
+.bd-overview th, .bd-overview td {padding:14px 16px; border-bottom:1px solid #EDF1F6;
     vertical-align:top; overflow-wrap:anywhere;}
-.bd-overview th:first-child, .bd-overview td:first-child {min-width:230px; max-width:260px;}
+.bd-overview th:first-child, .bd-overview td:first-child {
+    position:sticky; left:0; min-width:230px; max-width:260px; border-right:1px solid #E3E9F2;}
+.bd-overview th:first-child {z-index:3;}
+.bd-overview td:first-child {z-index:1; background:#FFFFFF; color:#203956; font-weight:600;}
 .bd-overview td.identity {min-width:115px; max-width:260px;}
 .bd-overview td.metric {text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap;}
-.bd-overview tbody tr:nth-child(even) {background:#FAFBFD;}
-.bd-overview tbody tr:hover {background:#F0F5FC;}
+.bd-overview tbody tr:nth-child(even), .bd-overview tbody tr:nth-child(even) td:first-child {background:#FAFCFF;}
+.bd-overview tbody tr:hover, .bd-overview tbody tr:hover td:first-child {background:#EDF4FF;}
+.bd-overview tbody tr:last-child td {border-bottom:0;}
+.bd-overview-scroll:focus-visible {outline:2px solid #315FCE; outline-offset:3px;}
+@media(max-width:640px) {
+    .bd-overview th:first-child, .bd-overview td:first-child {min-width:145px; max-width:160px;}
+    .bd-overview th, .bd-overview td {padding:12px;}
+}
 </style><div class="bd-overview-scroll" role="region" aria-label="模型指标总览" tabindex="0">
 <table class="bd-overview"><thead><tr>''' + header_html + '</tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>'
 
@@ -313,29 +322,32 @@ def _empty_guidance() -> None:
 
 
 def _overview(state: dict) -> None:
+    from .theme import build_summary_html
+
     st.header('模型总览')
     st.caption('按单项指标查看源站记录；排序不代表模型在所有场景下的表现。缺失值统一显示“暂无”。')
     records = state['records']
+    st.markdown(build_summary_html(state), unsafe_allow_html=True)
     if not records:
         _empty_guidance()
         return
     metric_paths = list(dict.fromkeys(DEFAULT_METRICS + state.get('metric_paths', [])))
-    filter_column, search_column = st.columns([1, 2])
-    with filter_column:
-        creators = st.multiselect('厂商筛选', sorted({creator_name(record) for record in records}),
-                                 key='creator_filter', placeholder='全部厂商')
-    with search_column:
-        search = st.text_input('搜索模型', key='model_search',
-                               placeholder='精确名称、配置标签、稳定 ID 或厂商')
-    sort_column, direction_column = st.columns([2, 1])
-    with sort_column:
-        sort_path = st.selectbox('排序指标', metric_paths, format_func=metric_label, key='sort_metric')
-    with direction_column:
-        direction = st.radio('数值顺序', ['从高到低', '从低到高'], horizontal=True,
-                             key='sort_direction', help='两个方向均将缺失值放在最后。')
-    with st.expander('自定义表格显示指标'):
-        selected_metrics = st.multiselect('表格显示指标', metric_paths, default=DEFAULT_METRICS,
-                                          format_func=metric_label, key='overview_metrics')
+    with st.container(key='overview_filters'):
+        search_column, filter_column, sort_column, direction_column = st.columns([1.3, 1, 1.3, 1.2])
+        with search_column:
+            search = st.text_input('搜索模型', key='model_search',
+                                   placeholder='搜索名称、配置、ID 或厂商')
+        with filter_column:
+            creators = st.multiselect('厂商筛选', sorted({creator_name(record) for record in records}),
+                                     key='creator_filter', placeholder='全部厂商')
+        with sort_column:
+            sort_path = st.selectbox('排序指标', metric_paths, format_func=metric_label, key='sort_metric')
+        with direction_column:
+            direction = st.radio('数值顺序', ['从高到低', '从低到高'], horizontal=True,
+                                 key='sort_direction', help='两个方向均将缺失值放在最后。')
+        with st.expander('自定义表格显示指标'):
+            selected_metrics = st.multiselect('表格显示指标', metric_paths, default=DEFAULT_METRICS,
+                                              format_func=metric_label, key='overview_metrics')
     assessments = {path: assess_metric(path, records, [state['snapshot']] * len(records))
                    for path in set(selected_metrics + [sort_path])}
     sort_conflict = assessments[sort_path].get('unit_conflict')
@@ -453,10 +465,16 @@ def _source_status(state: dict) -> None:
 
 
 def _provenance(state: dict) -> None:
+    st.markdown('<div class="bd-footer">BENCHMARK INSIGHTS · 数据来源于 Artificial Analysis</div>',
+                unsafe_allow_html=True)
+    with st.expander('数据来源与口径说明 · prompt_options', expanded=False):
+        _provenance_details(state)
+
+
+def _provenance_details(state: dict) -> None:
     snapshot = state.get('snapshot') or {}
     latest = state.get('latest_attempt') or {}
     last_success = state.get('last_success')
-    st.divider()
     st.markdown(f'数据来自 [Artificial Analysis]({SOURCE_URL}) · [官方 API 文档]({API_REFERENCE_URL})')
     st.caption(f"当前快照采集时间：{snapshot.get('collected_at') or '暂无'} · 来源：Artificial Analysis 官方 API")
     st.caption(f"最近成功采集时间：{_time(last_success, 'finished_at')}")
@@ -471,11 +489,11 @@ def _provenance(state: dict) -> None:
     st.caption(f'当前数据状态：{status}')
     st.caption(f'来源接口：{API_ENDPOINT}')
     st.info('以上公开价格、速度和延迟来自 Artificial Analysis 公开记录，不是公司网关或本地部署实测值；含义待确认的性能零值另行标注。')
-    with st.expander('源站测试参数（prompt_options）', expanded=True):
-        if snapshot.get('prompt_options') is not None:
-            st.json(snapshot['prompt_options'], expanded=True)
-        else:
-            st.write('源站未提供')
+    st.caption('源站测试参数（prompt_options）')
+    if snapshot.get('prompt_options') is not None:
+        st.json(snapshot['prompt_options'], expanded=True)
+    else:
+        st.write('源站未提供')
     st.caption('本页面用于本机开发验证。缺失值不补零；未提供的评测版本与日期不推断。')
 
 
@@ -484,13 +502,18 @@ def main(db_path: 'Path | None' = None) -> None:
     # Quote the annotation because AppTest extracts this function without module imports.
     from pathlib import Path
     from benchmark_dashboard import ui
+    from benchmark_dashboard.theme import apply_theme, render_brand
 
-    ui.st.set_page_config(page_title='模型指标面板', page_icon='📊', layout='wide',
-                          initial_sidebar_state='expanded')
-    ui.st.sidebar.title('模型指标面板')
-    ui.st.sidebar.caption('Artificial Analysis · 本地数据')
-    page = ui.st.sidebar.radio('页面', ['模型总览', '数据概况 / 日更简报', '模型对比', '数据源状态', '变化记录', 'AI 简报'], key='page')
-    ui.st.sidebar.caption('筛选、对比和刷新均只读取本地数据库。')
+    ui.st.set_page_config(page_title='模型指标面板 · Benchmark', page_icon=':material/monitoring:', layout='wide',
+                          initial_sidebar_state='auto')
+    apply_theme()
+    render_brand()
+    page = ui.st.sidebar.radio('页面', ['模型总览', '数据概况 / 日更简报', '模型对比', '数据源状态', '变化记录', 'AI 简报'],
+                               key='page', label_visibility='collapsed', width='stretch')
+    ui.st.sidebar.markdown('<div class="bd-sidebar-note"><strong>Artificial Analysis</strong><br>'
+                           '公开模型数据 · 本地快照<br>筛选、对比和刷新均只读取本地数据库。</div>',
+                           unsafe_allow_html=True)
+    ui.st.markdown('<div class="bd-eyebrow">BENCHMARK / 模型观察工作台</div>', unsafe_allow_html=True)
     try:
         state = ui.read_dashboard(Path(db_path) if db_path is not None else ui.DEFAULT_DB)
     except (OSError, ui.sqlite3.Error, ValueError, TypeError):
@@ -500,6 +523,8 @@ def main(db_path: 'Path | None' = None) -> None:
     latest = state.get('latest_attempt') or {}
     if latest.get('status') == 'failed' and state['records']:
         ui.st.warning('最近一次采集失败，当前继续展示上次有效快照，数据可能过期。详情见“数据源状态”。', icon='⚠️')
+    elif latest.get('status') == 'failed':
+        ui.st.error('最近一次采集失败，尚无有效数据。' + ui.safe_failure_message(latest))
     pages = {'模型总览': ui._overview, '模型对比': ui._comparison, '数据源状态': ui._source_status,
              '变化记录': ui._changes_page}
     if page == '数据概况 / 日更简报':
