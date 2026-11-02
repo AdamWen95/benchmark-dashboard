@@ -47,3 +47,15 @@ def test_atomic_failure_preserves_target(tmp_path, monkeypatch):
         acquisition.atomic_write(target, 'new')
     assert target.read_text() == 'old'
     assert not list(tmp_path.glob('.pending-*'))
+
+
+def test_snapshot_write_failure_preserves_request_count(tmp_path, monkeypatch, payload):
+    monkeypatch.setattr(acquisition, 'fetch_models', lambda *args, **kwargs: (payload, 200, 3))
+    def broken_write(*args):
+        raise OSError('SYNTHETIC_SECRET_DISK')
+    monkeypatch.setattr(acquisition, 'atomic_write', broken_write)
+    with pytest.raises(Exception) as caught:
+        acquisition.acquire(tmp_path, api_key='synthetic-key')
+    assert getattr(caught.value, 'attempts', None) == 3
+    assert getattr(caught.value, 'http_status', None) == 200
+    assert 'SYNTHETIC_SECRET_DISK' not in str(caught.value)

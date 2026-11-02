@@ -184,7 +184,8 @@ def _saved_run(run: dict | None) -> None:
               'not_started': '未执行', 'skipped': '已跳过', 'generated': '已生成',
               'cached': '复用已保存结果', 'disabled': '未启用', 'not_generated': '尚未生成',
               'failed_or_unknown': '失败或响应未知', 'skipped_collection_failed': '采集失败，已跳过分析',
-              'skipped_no_changes': '数据内容未变化，已跳过 AI'}
+              'skipped_no_changes': '数据内容未变化，已跳过 AI',
+              'skipped_contract_change': '数据口径切换，已建立基线并跳过 AI'}
     st.caption(f"最近日更运行：{run.get('run_id') or '暂无'}；运行日期：{run.get('run_date') or '暂无'}；"
                f"时区：{run.get('timezone') or '暂无'}；开始：{run.get('started_at') or '暂无'}；"
                f"结束：{run.get('finished_at') or '暂无'}。")
@@ -259,6 +260,9 @@ def _briefing(state: dict, overview: dict, run: dict | None, *, root: Path) -> N
             or collection.get('status') != 'success'
             or analysis.get('status') in ('failed', 'running', 'pending')):
         st.info('该次日更没有可发布的当前 AI 简报；旧结果保留为历史，不冒充本次成功。')
+        return
+    if analysis.get('status') == 'skipped_contract_change':
+        st.info('数据接口或指数版本已切换，本次建立新比较基线，未请求 AI；历史正文保留原始依据。')
         return
     if analysis.get('status') == 'skipped_no_changes':
         st.info('该次采集的数据内容未变化，未请求 AI，也未生成新正文。'

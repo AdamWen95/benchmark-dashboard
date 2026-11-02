@@ -8,14 +8,14 @@ import sqlite3
 from typing import TYPE_CHECKING
 
 from .metrics import value_at
-from .validation import canonical_json, content_hash, validate_payload
+from .validation import DataValidationError, canonical_json, content_hash, validate_payload
+from .free_api import API_URL, LEGACY_URL, BASELINE_NOTICE, is_free, is_transition
 
 if TYPE_CHECKING:
     from .acquisition import Acquisition
 
 
 SOURCE = 'artificial_analysis'
-ENDPOINT = 'https://artificialanalysis.ai/api/v2/data/llms/models'
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -126,7 +126,7 @@ def record_success(db_path: str | Path, result: Acquisition) -> dict:
                         prompt_options_json, coverage_json, unknown_fields_json,
                         warnings_json, payload_json)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                    (SOURCE, valid.content_hash, result.collected_at, ENDPOINT,
+                    (SOURCE, valid.content_hash, result.collected_at, API_URL if is_free(valid.payload) else LEGACY_URL,
                      len(valid.records), canonical_json(valid.payload.get('prompt_options')),
                      canonical_json(valid.coverage), canonical_json(valid.unknown_fields),
                      canonical_json(valid.warnings), canonical_json(valid.payload)),
@@ -209,7 +209,12 @@ def _read_point(connection: sqlite3.Connection, run: dict) -> dict:
         raise _HistoryUnavailable('快照内容无法还原。')
     for key in ('prompt_options', 'coverage', 'unknown_fields', 'warnings'):
         snapshot[key] = json.loads(snapshot.pop(key + '_json'))
-    snapshot['metadata'] = {key: value for key, value in payload.items() if key != 'data'}
+    snapshot['metadata'] = {key: value for key, value in payload.items() if key not in ('data', 'api_pages')}
+    if is_free(payload):
+        try:
+            validate_payload(payload)
+        except DataValidationError:
+            raise _HistoryUnavailable('免费接口分页证据无法完整校验。') from None
     if not isinstance(snapshot['coverage'], dict):
         raise _HistoryUnavailable('快照指标索引无法还原。')
     if snapshot['prompt_options'] != payload.get('prompt_options'):
@@ -290,6 +295,9 @@ def read_dashboard(db_path: str | Path) -> dict:
                 if _timestamp(after['run']['finished_at']) < _timestamp(before['run']['finished_at']):
                     raise _HistoryUnavailable('成功运行时间与记录顺序不一致。')
                 state['comparison'] = _comparison('ready', before=before, after=after)
+                if is_transition(before['snapshot'], after['snapshot']):
+                    state['comparison'] = _comparison('baseline', before=before, after=after,
+                                                      message=BASELINE_NOTICE)
             except (ValueError, TypeError, KeyError, sqlite3.Error):
                 state['comparison'] = _comparison('unavailable', after=after)
         return state

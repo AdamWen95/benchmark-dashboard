@@ -152,8 +152,10 @@ def _build(state: dict, ids: list[str]) -> dict:
     incoming = state.get('metric_paths') or []
     if not isinstance(incoming, list) or any(not isinstance(path, str) for path in incoming):
         raise ValueError(SAFE_ERROR)
-    full_paths = sorted(set(incoming) & set(metrics.DISPLAY_METRICS))
-    paths = sorted(set(full_paths) & set(fact_pack.EXAMPLE_PATHS))
+    full_paths = sorted(set(incoming) & set(metrics.display_metrics(state.get('snapshot'))))
+    from .free_api import snapshot_is_free
+    example_paths = metrics.FREE_DEFAULT_METRICS if snapshot_is_free(state.get('snapshot')) else fact_pack.EXAMPLE_PATHS
+    paths = sorted(set(full_paths) & set(example_paths))
     aliases = [f'R{index}' for index in range(1, len(records) + 1)]
     identity = [PACK_VERSION, fact_pack.SOURCE, snapshot['id'], snapshot['content_hash'], chosen_hash,
                 metrics.METRIC_MAPPING_VERSION, insights.RULE_VERSION]

@@ -15,7 +15,9 @@ TEST_KEY = "test-only-credential-do-not-use"
 class Response:
     def __init__(self, status=200, payload=None, error=None):
         self.status_code = status
-        self.payload = {"data": [{"id": "model-1"}]} if payload is None else payload
+        self.payload = {'tier': 'free', 'intelligence_index_version': 5,
+                        'pagination': {'page': 1, 'page_size': 200, 'total_pages': 1, 'has_more': False},
+                        'data': [{'id': 'model-1'}]} if payload is None else payload
         self.error = error
 
     @property
@@ -49,12 +51,14 @@ def test_success_uses_expected_header_timeouts_and_disallows_redirects():
     session = Session(Response())
     payload, status, attempts = fetch_models(TEST_KEY, session=session)
     assert (status, attempts) == (200, 1)
-    assert payload == {"data": [{"id": "model-1"}]}
+    assert payload['data'] == [{"id": "model-1"}]
+    assert payload['api_pages'] == [Response().payload]
     assert SOURCE == "artificial_analysis"
     assert session.calls == [(API_URL, {
         "headers": {"x-api-key": TEST_KEY, "Accept": "application/json"},
         "timeout": (10, 45),
         "allow_redirects": False,
+        "params": {"page": 1},
     })]
 
 
@@ -62,6 +66,7 @@ def test_success_uses_expected_header_timeouts_and_disallows_redirects():
     (401, "authentication_failed"), (403, "authentication_failed"),
     (301, "redirect_rejected"), (307, "redirect_rejected"),
     (400, "unexpected_http_status"), (404, "unexpected_http_status"),
+    (429, "rate_limited"), (410, "endpoint_retired"),
 ])
 def test_non_retryable_http_errors_are_safe(status, code, caplog, capsys):
     session = Session(Response(status, {"error": TEST_KEY}))
@@ -80,7 +85,6 @@ def test_non_retryable_http_errors_are_safe(status, code, caplog, capsys):
 
 
 @pytest.mark.parametrize("failure,code,status", [
-    (Response(429), "rate_limited", 429),
     (Response(500), "upstream_unavailable", 500),
     (Response(503), "upstream_unavailable", 503),
     (requests.Timeout(TEST_KEY), "timeout", None),
@@ -100,7 +104,7 @@ def test_retry_exhaustion_has_bounded_backoff_and_safe_error(failure, code, stat
 
 
 def test_retries_can_recover_after_different_failures():
-    session = Session(requests.Timeout(TEST_KEY), Response(429), Response())
+    session = Session(requests.Timeout(TEST_KEY), Response(503), Response())
     delays = []
     payload, status, attempts = fetch_models(TEST_KEY, session=session, sleep=delays.append)
     assert payload["data"]

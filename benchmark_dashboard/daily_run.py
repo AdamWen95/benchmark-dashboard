@@ -15,11 +15,12 @@ import sqlite3
 import tempfile
 from zoneinfo import ZoneInfo
 
-from .acquisition import acquire, utc_now
+from .acquisition import AcquisitionSaveError, acquire, utc_now
 from .analysis_config import load_analysis_settings
 from .config import load_api_key
 from .store import read_dashboard, record_failure, record_success
 from .validation import canonical_json
+from .free_api import MAX_REQUESTS, BASELINE_NOTICE, is_transition, snapshot_is_free, model_content_hash
 
 SCHEMA = 'm3-daily-run-v1'
 CONTROL = Path('data/daily_control')
@@ -220,6 +221,8 @@ def execute_daily(root: Path, *, run_date: str, scope_id: str, enable_once=False
     # new post-collection pack is validated again before the one analysis call.
     initial_pack = build_daily_fact_pack(state, ids)
     previous_content_hash = state['snapshot']['content_hash']
+    previous_snapshot = state['snapshot']
+    previous_models_hash = model_content_hash(state['records'])
     key = (source_key_loader or load_api_key)(root)
     settings = None
     if allow_analysis and not analysis_only_on_change:
@@ -227,6 +230,7 @@ def execute_daily(root: Path, *, run_date: str, scope_id: str, enable_once=False
     guard = {'schema_version': SCHEMA, 'run_id': paths['run_id'], 'scope_id': scope_id,
              'run_date': run_date, 'started_at': utc_now(), 'collection_attempts': 0,
              'analysis_attempts': 0, 'status': 'claimed', 'limits': {'collection': 1, 'analysis': int(allow_analysis)}}
+    guard['limits']['collection_http_requests'] = MAX_REQUESTS
     try:
         _write(paths['active'], guard, exclusive=True)
     except FileExistsError:
@@ -254,6 +258,7 @@ def execute_daily(root: Path, *, run_date: str, scope_id: str, enable_once=False
         _write(paths['date_guard'], guard)
         result['collection'].update(status='running', attempts=1)
         _publish(root, paths['result'], result)
+        acquisition = None
         try:
             acquisition = (acquire_fn or acquire)(root, started_at=guard['started_at'],
                                                    max_attempts=1, api_key=key)
@@ -263,13 +268,16 @@ def execute_daily(root: Path, *, run_date: str, scope_id: str, enable_once=False
         except Exception as error:
             from .client import SourceError
             from .validation import DataValidationError
-            safe = isinstance(error, (SourceError, DataValidationError))
-            status = getattr(error, 'http_status', None) if safe else None
+            safe = isinstance(error, (SourceError, DataValidationError, AcquisitionSaveError))
+            status = getattr(error, 'http_status', None) if safe else getattr(acquisition, 'http_status', None)
             code = getattr(error, 'code', 'invalid_schema') if safe else 'local_error'
+            http_attempts = getattr(error, 'attempts', 1) if safe else getattr(acquisition, 'attempts', 1)
+            if type(http_attempts) is not int or not 0 <= http_attempts <= MAX_REQUESTS:
+                http_attempts = 1
             record_failure(root / 'data/dashboard.sqlite3', started_at=guard['started_at'],
                            finished_at=utc_now(), error_code=code, message=SAFE_FAILURE,
-                           http_status=status, attempts=1)
-            result['collection'] = {'status': 'failed', 'attempts': 1, 'http_status': status, 'error_code': code}
+                           http_status=status, attempts=http_attempts)
+            result['collection'] = {'status': 'failed', 'attempts': http_attempts, 'http_status': status, 'error_code': code}
             result['analysis'].update(status='skipped_collection_failed', message=SAFE_FAILURE)
             state = read_dashboard(root / 'data/dashboard.sqlite3')
             result['overview'] = build_daily_overview(state)
@@ -289,13 +297,19 @@ def execute_daily(root: Path, *, run_date: str, scope_id: str, enable_once=False
         if not allow_analysis:
             result['analysis'].update(status='disabled', message='本轮未授权分析；程序规则概况可用。')
             return result
+        if is_transition(previous_snapshot, state['snapshot']):
+            result['analysis'].update(status='skipped_contract_change', message=BASELINE_NOTICE)
+            return result
         cached = read_daily_briefing(pack, root=root)
         if cached.get('status') == 'generated':
             result['analysis'] = {**cached, 'attempts': 0, 'cached': True}
             return result
         # A return to older stored content is still a change: new_snapshot only
         # describes storage deduplication, not the immediately previous data.
-        if analysis_only_on_change and state['snapshot']['content_hash'] == previous_content_hash:
+        same_content = state['snapshot']['content_hash'] == previous_content_hash
+        if snapshot_is_free(previous_snapshot) and snapshot_is_free(state['snapshot']):
+            same_content = previous_models_hash == model_content_hash(state['records'])
+        if analysis_only_on_change and same_content:
             result['analysis'].update(status='skipped_no_changes',
                 message='本次采集的数据内容未变化，未请求 AI；已保存的旧正文仍可在历史日更审核中查看。')
             return result

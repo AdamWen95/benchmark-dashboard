@@ -21,7 +21,8 @@ MAX_CHANGE_DETAILS = 24
 SAFE_ERROR = '日更事实包无法生成，请继续查看本地全量规则概况。'
 OVERVIEW_ERROR = '日更概况暂时无法生成，请保留原表查看。'
 _CONTEXT_KEYS = ('evaluation_version', 'evaluation_versions', 'metric_versions',
-                 'evaluation_date', 'metric_units', 'units', 'prompt_options', *CONFIG_KEYS)
+                 'evaluation_date', 'metric_units', 'units', 'prompt_options',
+                 'api_contract', 'intelligence_index_version', *CONFIG_KEYS)
 _RULES = (
     '全量指本次 Artificial Analysis 有效快照的所有记录，不等于全部市场模型。',
     '有限数值覆盖统计包含合法的 0，缺失、布尔、非法类型和非有限值不计入；不等于可靠实测覆盖率。',
@@ -95,7 +96,7 @@ def _overview(state: dict) -> dict:
     snapshot = fact_pack._snapshot(state['snapshot']) if state.get('snapshot') else None
     if records and snapshot is None:
         raise ValueError(OVERVIEW_ERROR)
-    coverage = metrics.coverage_rows(records, sorted(metrics.DISPLAY_METRICS))
+    coverage = metrics.coverage_rows(records, sorted(metrics.display_metrics(state.get('snapshot'))))
     for row in coverage:
         path = row['path']
         zero_count = sum(metrics.performance_zero_notice(record, path) is not None for record in records)
@@ -142,7 +143,7 @@ def _semantic_data_hash(state: dict) -> str:
                         'context': context,
                         'values': {path: metrics.value_at(record, path)
                                    if metrics.numeric_value(metrics.value_at(record, path)) is not None else None
-                                   for path in sorted(metrics.DISPLAY_METRICS)}})
+                                   for path in sorted(metrics.display_metrics(state.get('snapshot')))}})
     snap = state['snapshot']
     metadata = snap.get('metadata')
     return _hash({'records': records,
@@ -157,7 +158,7 @@ def _change_details(changes: dict) -> list[dict]:
     groups = Counter()
     for event in changes['events']:
         path = event.get('path')
-        path = path if path in metrics.DISPLAY_METRICS else 'record_metadata' if event['type'] == 'metadata' else None
+        path = path if path in (metrics.DISPLAY_METRICS | metrics.FREE_METRICS) else 'record_metadata' if event['type'] == 'metadata' else None
         status = event.get('comparability')
         status = status if status in ('comparable', 'unconfirmed', 'changed') else 'unconfirmed'
         groups[(event['type'], path, status)] += 1
@@ -171,7 +172,7 @@ def _base_pack(state: dict, retained: list[str]) -> dict:
         # All known fields are covered even when entirely absent from the source
         # payload; absent cells must remain explicitly missing.
         return selected_facts.build_selected_fact_pack(
-            {**state, 'metric_paths': sorted(metrics.DISPLAY_METRICS)}, retained)
+            {**state, 'metric_paths': sorted(metrics.display_metrics(state.get('snapshot')))}, retained)
     snapshot = fact_pack._snapshot(state['snapshot'])
     return {'schema_version': fact_pack.SCHEMA_VERSION, 'source': fact_pack.SOURCE, 'snapshot': snapshot,
             'metric_mapping_version': metrics.METRIC_MAPPING_VERSION, 'rule_version': insights.RULE_VERSION,
@@ -210,7 +211,7 @@ def _candidate(state: dict, overview: dict, requested: list[str], retained: list
     scope['selection_rule'] = scope['selected_examples']['selection_rule']
     scope['difference_scope'] = 'selected_examples only; each later alias compared with R1, not historical changes'
     scope['fact_id_scheme'] = 'F1..Fn; full local identities derived from daily fact_hash and short ID'
-    scope['coverage_metric_paths'] = sorted(metrics.DISPLAY_METRICS)
+    scope['coverage_metric_paths'] = sorted(metrics.display_metrics(state.get('snapshot')))
     scope['numeric_coverage_definition'] = _RULES[1]
     facts = pack['facts']
     for fact in facts:

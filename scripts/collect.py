@@ -7,11 +7,12 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from benchmark_dashboard.acquisition import Acquisition, acquire, utc_now
+from benchmark_dashboard.acquisition import Acquisition, AcquisitionSaveError, acquire, utc_now
 from benchmark_dashboard.client import API_URL, SourceError
 from benchmark_dashboard.config import SafeError
 from benchmark_dashboard.store import record_failure, record_success
 from benchmark_dashboard.validation import DataValidationError, validate_payload
+from benchmark_dashboard.free_api import LEGACY_URL
 
 
 def from_m0(root: Path) -> Acquisition:
@@ -23,7 +24,7 @@ def from_m0(root: Path) -> Acquisition:
             raise ValueError
         path = root / 'data' / 'snapshots' / f'{digest}.json'
         envelope = json.loads(path.read_text(encoding='utf-8'))
-        if envelope['source'] != 'artificial_analysis' or envelope['endpoint'] != API_URL:
+        if envelope['source'] != 'artificial_analysis' or envelope['endpoint'] not in (API_URL, LEGACY_URL):
             raise ValueError
         valid = validate_payload(envelope['payload'])
         if valid.content_hash != digest or envelope['content_hash'] != digest:
@@ -43,7 +44,7 @@ def main(argv=None) -> int:
     try:
         result = from_m0(ROOT) if args.from_m0 else acquire(ROOT, started_at=started_at)
         saved = record_success(database, result)
-    except (SourceError, SafeError, DataValidationError) as error:
+    except (SourceError, SafeError, DataValidationError, AcquisitionSaveError) as error:
         message = str(error)
         code = getattr(error, 'code', 'invalid_schema')
         try:

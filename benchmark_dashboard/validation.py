@@ -6,7 +6,8 @@ import json
 import math
 from typing import Any
 
-from .metrics import METRICS, value_at
+from .metrics import METRICS, FREE_METRICS, value_at
+from .free_api import ContractError, is_free, validate_bundle
 
 
 class DataValidationError(Exception):
@@ -47,6 +48,15 @@ def content_hash(payload: dict) -> str:
 def validate_payload(payload: Any) -> ValidatedData:
     if not isinstance(payload, dict):
         raise DataValidationError('响应根节点必须为对象。')
+    free = is_free(payload)
+    if 'api_contract' in payload and not free:
+        raise DataValidationError('不支持的数据契约版本。')
+    if free:
+        try:
+            validate_bundle(payload)
+        except (ContractError, TypeError, KeyError):
+            raise DataValidationError('免费接口完整分页与汇总记录不一致。') from None
+    known_metrics = FREE_METRICS if free else METRICS
     if 'status' in payload and (type(payload['status']) is not int or payload['status'] != 200):
         raise DataValidationError('响应内部 status 不是成功状态。')
     rows = payload.get('data')
@@ -57,11 +67,13 @@ def validate_payload(payload: Any) -> ValidatedData:
     fields: Counter = Counter()
     unknown: set[str] = set()
     warnings: set[str] = set()
-    paths = set(METRICS)
+    paths = set(known_metrics)
     seen: set[str] = set()
     known_top = {'id', 'name', 'slug', 'model_creator', 'evaluations', 'pricing',
                  'median_output_tokens_per_second', 'median_time_to_first_token_seconds',
                  'median_time_to_first_answer_token'}
+    if free:
+        known_top.update(('performance', 'release_date', 'artificial_analysis_intelligence_index_cost'))
 
     def inventory(obj: dict, prefix: str = '') -> None:
         for key, value in obj.items():
@@ -82,7 +94,9 @@ def validate_payload(payload: Any) -> ValidatedData:
         seen.add(row['id'])
         if row.get('slug') is not None and not isinstance(row['slug'], str):
             raise DataValidationError(f'{location}.slug 类型错误。')
-        for key in ('model_creator', 'evaluations', 'pricing'):
+        for key in ('model_creator', 'evaluations', 'pricing', *(['performance'] if free else [])):
+            if free and not isinstance(row.get(key), dict):
+                raise DataValidationError(f'{location}.{key} 必须为对象。')
             if row.get(key) is not None and not isinstance(row[key], dict):
                 raise DataValidationError(f'{location}.{key} 必须为对象或空值。')
         for key, value in (row.get('model_creator') or {}).items():
@@ -90,32 +104,33 @@ def validate_payload(payload: Any) -> ValidatedData:
                 raise DataValidationError(f'{location}.model_creator 标识字段类型错误。')
             if key not in {'id', 'name', 'slug'}:
                 unknown.add(f'model_creator.{key}')
-        for path in METRICS:
+        for path in known_metrics:
             value = value_at(row, path)
             if value is not None and not is_number(value):
                 raise DataValidationError(f'{location}.{path} 必须为有限数值或空值。')
-            if value is not None and (path.startswith('pricing.') or path.startswith('median_')) and value < 0:
+            if value is not None and path.startswith(('pricing.', 'median_', 'performance.')) and value < 0:
                 raise DataValidationError(f'{location}.{path} 不能为负数。')
-        for group in ('evaluations', 'pricing'):
+        for group in ('evaluations', 'pricing', *(['performance'] if free else [])):
             for key, value in (row.get(group) or {}).items():
                 path = f'{group}.{key}'
-                if path not in METRICS:
+                if path not in known_metrics:
                     unknown.add(path)
-                    if value is None or is_number(value):
+                    if not free and (value is None or is_number(value)):
                         paths.add(path)
                     else:
                         warnings.add(f'{path} 为未知非数值字段；仅保留原始值，不参与数值展示。')
         unknown.update(key for key in row if key not in known_top)
         inventory(row)
     # Do not display mixed-type unknown columns as a metric.
-    for path in tuple(paths - set(METRICS)):
+    for path in tuple(paths - set(known_metrics)):
         if any(value_at(row, path) is not None and not is_number(value_at(row, path)) for row in rows):
             paths.remove(path)
     try:
         digest = content_hash(payload)
     except (ValueError, TypeError, OverflowError):
         raise DataValidationError('响应包含无法保存为标准 JSON 的值。') from None
-    unknown.update(f'response.{key}' for key in payload if key not in {'status', 'data', 'prompt_options'})
+    top_fields = {'api_contract', 'api_pages', 'tier', 'intelligence_index_version', 'data'} if free else {'status', 'data', 'prompt_options'}
+    unknown.update(f'response.{key}' for key in payload if key not in top_fields)
     return ValidatedData(payload, rows, digest, dict(sorted(fields.items())), sorted(payload),
                          {path: sum(value_at(row, path) is not None for row in rows) for path in sorted(paths)},
                          sorted(unknown), sorted(warnings))

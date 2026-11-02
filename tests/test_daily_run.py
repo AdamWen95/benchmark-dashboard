@@ -302,3 +302,53 @@ def test_backup_sees_committed_wal_content(setup):
         daily_run.backup_database(db, target)
         with sqlite3.connect(target) as backup:
             assert backup.execute('SELECT value FROM synthetic_wal').fetchone()[0] == 'committed'
+
+
+def test_free_migration_skips_ai_and_keeps_day_guard(setup):
+    from tests.test_free_api import bundle
+    root, source = setup
+    client = FakeClient()
+    result, calls = run(root, bundle(source), client=client, analysis_only_on_change=True)
+    assert calls == [1] and client.calls == 0
+    assert result['collection']['status'] == 'success'
+    assert result['analysis']['status'] == 'skipped_contract_change'
+    assert result['overview']['changes']['status'] == 'baseline'
+    with pytest.raises(daily_run.DailyError):
+        run(root, bundle(source), client=client, analysis_only_on_change=True)
+
+
+def test_free_pagination_metadata_change_does_not_call_ai(setup):
+    from tests.test_free_api import bundle
+    from benchmark_dashboard.free_api import merge_pages
+    root, source = setup
+    data = bundle(source)
+    record_success(root / 'data/dashboard.sqlite3', Acquisition(validate_payload(data),
+        '2026-09-19T07:00:00+00:00', '2026-09-19T07:01:00+00:00', 200, 1, root / 'fake.json'))
+    item = deepcopy(data['api_pages'][0])
+    item['pagination']['page_size'] = 200
+    changed = merge_pages([item])
+    client = FakeClient()
+    result, _ = run(root, changed, client=client, analysis_only_on_change=True)
+    assert result['collection']['new_snapshot'] is True
+    assert client.calls == 0
+    assert result['analysis']['status'] == 'skipped_no_changes'
+
+
+def test_failed_second_page_records_actual_http_count(setup):
+    root, source = setup
+    result, _ = run(root, source, acquire_error=SourceError('timeout', '测试超时', attempts=2))
+    assert result['collection']['attempts'] == 2
+    assert read_dashboard(root / 'data/dashboard.sqlite3')['latest_attempt']['attempts'] == 2
+
+
+def test_storage_failure_after_three_requests_keeps_count(setup, monkeypatch):
+    root, source = setup
+    def acquire_three(project, **options):
+        return Acquisition(validate_payload(source), options['started_at'], NOW.isoformat(),
+                           200, 3, root / 'fake.json')
+    def broken_store(*args, **kwargs):
+        raise OSError('synthetic disk failure')
+    monkeypatch.setattr(daily_run, 'record_success', broken_store)
+    result, _ = run(root, source, acquire_fn=acquire_three)
+    assert result['collection']['attempts'] == 3
+    assert read_dashboard(root / 'data/dashboard.sqlite3')['latest_attempt']['attempts'] == 3

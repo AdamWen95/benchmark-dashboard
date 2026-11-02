@@ -164,6 +164,11 @@ def _changes(state: dict, snapshot: dict, identity: list) -> dict:
                 'empty': '暂无成功采集时间点，缺少比较依据。'}
     if status != 'ready':
         text = messages[status]
+        from .free_api import BASELINE_NOTICE, is_transition
+        if status == 'baseline' and is_transition(
+            ((comparison.get('before') or {}).get('snapshot')),
+            ((comparison.get('after') or {}).get('snapshot'))):
+            text = BASELINE_NOTICE
     elif any(counts.values()):
         text = '最近两次成功采集的记录比较：' + '；'.join(
             f'{EVENT_LABELS[key]} {counts[key]} 项' for key in EVENT_TYPES if counts[key]) + '。'
@@ -195,8 +200,10 @@ def _build(state: dict) -> dict:
     incoming_paths = state.get('metric_paths') or []
     if not isinstance(incoming_paths, list) or any(not isinstance(path, str) for path in incoming_paths):
         raise ValueError(SAFE_ERROR)
-    paths = sorted(set(incoming_paths) & set(metrics.DISPLAY_METRICS))
-    example_paths = sorted(set(paths) & set(EXAMPLE_PATHS))
+    paths = sorted(set(incoming_paths) & set(metrics.display_metrics(state.get('snapshot'))))
+    from .free_api import snapshot_is_free
+    allowed_examples = metrics.FREE_DEFAULT_METRICS if snapshot_is_free(state.get('snapshot')) else EXAMPLE_PATHS
+    example_paths = sorted(set(paths) & set(allowed_examples))
     identity = [SOURCE, snapshot['id'], snapshot['content_hash'],
                 metrics.METRIC_MAPPING_VERSION, insights.RULE_VERSION]
     facts = []

@@ -1,5 +1,11 @@
 # 指标口径与字段映射
 
+## 免费接口（2026-11-02）
+
+当前采集使用新免费接口。行业指数使用源站原值；速度与延迟读取 `performance.median_output_tokens_per_second`、`performance.median_time_to_first_token_seconds`、`performance.median_time_to_first_answer_token_seconds`、`performance.median_end_to_end_response_time_seconds`，单位依次为 Token/秒、秒、秒、秒。完整响应耗时按官方默认 500 回答 Token。性能工作负载未提供，不推断为旧接口的 medium。版本变化建立新基线，不反向补齐旧版本。来源：[官方数据约定](https://artificialanalysis.ai/data-api/docs)、[字段结构](https://artificialanalysis.ai/data-api/docs/reference)。
+
+免费版不提供完整单项评测和混合价格，Coding/Agentic 指数已停止发布。页面区分当前免费指标与旧快照历史指标。详见 [迁移说明](aa_free_api_migration.md)。下表保留旧格式记录的字段解释，不表示免费端点仍提供所有这些字段。
+
 显式映射位于 `benchmark_dashboard/metrics.py`；采集后的原始响应保留在本地快照和 SQLite 中。本文件解释当前代码中的字段语义，不包含真实采集样本。
 
 | 字段/类别 | 展示单位 | 处理 |

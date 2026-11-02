@@ -37,6 +37,15 @@ class Acquisition:
     snapshot_path: Path
 
 
+class AcquisitionSaveError(Exception):
+    """Safe failure retaining already-consumed remote request accounting."""
+    code = 'local_error'
+
+    def __init__(self, http_status: int, attempts: int):
+        self.http_status, self.attempts = http_status, attempts
+        super().__init__('本地快照保存失败；已发送的请求计数保留，本批次不重试。')
+
+
 def acquire(root: Path, *, started_at: str | None = None, max_attempts: int = 3,
             api_key: str | None = None) -> Acquisition:
     started_at = started_at or utc_now()
@@ -51,12 +60,15 @@ def acquire(root: Path, *, started_at: str | None = None, max_attempts: int = 3,
         raise
     collected_at = utc_now()
     path = root / 'data' / 'snapshots' / f'{valid.content_hash}.json'
-    if not path.exists():
-        envelope = {'source': 'artificial_analysis', 'endpoint': API_URL,
-                    'collected_at': collected_at, 'content_hash': valid.content_hash,
-                    'hash_definition': 'SHA-256 canonical JSON, data sorted by stable ID',
-                    'payload': payload}
-        atomic_write(path, json.dumps(envelope, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
+    try:
+        if not path.exists():
+            envelope = {'source': 'artificial_analysis', 'endpoint': API_URL,
+                        'collected_at': collected_at, 'content_hash': valid.content_hash,
+                        'hash_definition': 'SHA-256 canonical JSON, data sorted by stable ID',
+                        'payload': payload}
+            atomic_write(path, json.dumps(envelope, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
+    except OSError:
+        raise AcquisitionSaveError(http_status, attempts) from None
     return Acquisition(valid, started_at, collected_at, http_status, attempts, path)
 
 

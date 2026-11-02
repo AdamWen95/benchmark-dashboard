@@ -7,6 +7,8 @@ from hashlib import sha256
 import json
 
 from .comparability import CONFIG_KEYS, assess_metric
+from .free_api import snapshot_is_free
+from .metrics import FREE_METRICS
 from .metrics import (PERFORMANCE_PATHS, PERFORMANCE_ZERO_NOTICE, format_raw_value,
                       format_value, metric_for, normalized_value, numeric_value,
                       performance_zero_notice, value_at)
@@ -144,8 +146,11 @@ def _generate(records: list[dict], snapshot: dict, metric_paths: list[str]) -> d
     paragraphs = []
     changed = False
     unconfirmed = False
-    for category, eligible in [('能力指标', REPORTED_ABILITY_PATHS),
-                               ('价格与速度', REPORTED_PRICE_SPEED_PATHS)]:
+    ability, price_speed = REPORTED_ABILITY_PATHS, REPORTED_PRICE_SPEED_PATHS
+    if snapshot_is_free(snapshot):
+        ability = tuple(path for path in FREE_METRICS if path.startswith('evaluations.'))
+        price_speed = tuple(path for path in FREE_METRICS if path.startswith(('pricing.', 'performance.')))
+    for category, eligible in [('能力指标', ability), ('价格与速度', price_speed)]:
         selected = [path for path in paths if path in eligible]
         if not selected:
             continue

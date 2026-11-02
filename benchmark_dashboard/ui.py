@@ -13,13 +13,14 @@ from benchmark_dashboard.comparability import assess_metric
 from benchmark_dashboard.changes import compare_runs
 from benchmark_dashboard.insights import generate_insights, reported_programming_rows
 from benchmark_dashboard.store import read_dashboard
+from benchmark_dashboard.free_api import API_URL, NOTICE, snapshot_is_free
+from benchmark_dashboard.metrics import FREE_DEFAULT_METRICS
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / 'data' / 'dashboard.sqlite3'
 SOURCE_URL = 'https://artificialanalysis.ai'
-API_REFERENCE_URL = f'{SOURCE_URL}/api-reference'
-API_ENDPOINT = f'{SOURCE_URL}/api/v2/data/llms/models'
+API_REFERENCE_URL = f'{SOURCE_URL}/data-api/docs/reference'
 DEFAULT_METRICS = [
     'evaluations.artificial_analysis_intelligence_index',
     'evaluations.artificial_analysis_coding_index',
@@ -29,6 +30,10 @@ DEFAULT_METRICS = [
     'median_output_tokens_per_second',
     'median_time_to_first_token_seconds',
 ]
+
+
+def default_metrics(state: dict) -> list[str]:
+    return FREE_DEFAULT_METRICS if snapshot_is_free(state.get('snapshot')) else DEFAULT_METRICS
 
 
 def creator_name(record: dict) -> str:
@@ -298,7 +303,9 @@ def safe_failure_message(run: dict) -> str:
     """Never render the stored free-text error or an unknown error code."""
     messages = {
         'authentication_failed': '鉴权失败。请在本机检查 API Key 配置。',
-        'rate_limited': '请求限流。请稍后重新采集。',
+        'rate_limited': '请求限流：源站额度受限，本次已停止；当天日更不会自动重试。',
+        'request_budget_exceeded': '完整采集所需请求超出本批次上限，已保留上一份有效数据。',
+        'endpoint_retired': '源站接口已停用，本次未更新；请核对迁移部署。',
         'timeout': '请求超时。请检查网络后重新采集。',
         'network_error': '网络连接失败。请检查网络后重新采集。',
         'upstream_unavailable': '数据源暂时不可用。请稍后重新采集。',
@@ -331,7 +338,7 @@ def _overview(state: dict) -> None:
     if not records:
         _empty_guidance()
         return
-    metric_paths = list(dict.fromkeys(DEFAULT_METRICS + state.get('metric_paths', [])))
+    metric_paths = list(dict.fromkeys(default_metrics(state) + state.get('metric_paths', [])))
     with st.container(key='overview_filters'):
         search_column, filter_column, sort_column, direction_column = st.columns([1.3, 1, 1.3, 1.2])
         with search_column:
@@ -346,7 +353,7 @@ def _overview(state: dict) -> None:
             direction = st.radio('数值顺序', ['从高到低', '从低到高'], horizontal=True,
                                  key='sort_direction', help='两个方向均将缺失值放在最后。')
         with st.expander('自定义表格显示指标'):
-            selected_metrics = st.multiselect('表格显示指标', metric_paths, default=DEFAULT_METRICS,
+            selected_metrics = st.multiselect('表格显示指标', metric_paths, default=default_metrics(state),
                                               format_func=metric_label, key='overview_metrics')
     assessments = {path: assess_metric(path, records, [state['snapshot']] * len(records))
                    for path in set(selected_metrics + [sort_path])}
@@ -392,7 +399,7 @@ def _comparison(state: dict) -> None:
     if not 2 <= len(chosen_ids) <= 4:
         st.info('请选择 2–4 条模型记录后查看对比。')
         return
-    paths = list(dict.fromkeys(DEFAULT_METRICS + state.get('metric_paths', [])))
+    paths = list(dict.fromkeys(default_metrics(state) + state.get('metric_paths', [])))
     selected_records = [by_id[record_id] for record_id in chosen_ids]
     assessments = {path: assess_metric(path, selected_records, [state['snapshot']] * len(selected_records))
                    for path in paths}
@@ -460,7 +467,7 @@ def _source_status(state: dict) -> None:
             st.write('未知字段保留在完整记录中；未知非数值字段不参与排序。')
             st.json({'unknown_fields': snapshot.get('unknown_fields', []),
                      'warnings': snapshot.get('warnings', [])}, expanded=False)
-    st.caption('手动更新：请在项目根目录运行下列命令。本轮不设置定时采集。')
+    st.caption('下列手动采集命令仅供另行明确授权的执行使用，不用于日更重试或升级检查。')
     st.code('.\\.venv\\Scripts\\python.exe scripts\\collect.py', language='powershell')
 
 
@@ -487,7 +494,9 @@ def _provenance_details(state: dict) -> None:
     else:
         status = '尚无有效数据'
     st.caption(f'当前数据状态：{status}')
-    st.caption(f'来源接口：{API_ENDPOINT}')
+    st.caption(f"来源接口：{snapshot.get('endpoint') or API_URL}")
+    if snapshot_is_free(snapshot):
+        st.caption(f"综合智能指数版本：{snapshot['metadata'].get('intelligence_index_version')}；性能测试工作负载：源站未提供。")
     st.info('以上公开价格、速度和延迟来自 Artificial Analysis 公开记录，不是公司网关或本地部署实测值；含义待确认的性能零值另行标注。')
     st.caption('源站测试参数（prompt_options）')
     if snapshot.get('prompt_options') is not None:
@@ -521,6 +530,8 @@ def main(db_path: 'Path | None' = None) -> None:
         ui._provenance({})
         return
     latest = state.get('latest_attempt') or {}
+    if ui.snapshot_is_free(state.get('snapshot')):
+        ui.st.info(ui.NOTICE)
     if latest.get('status') == 'failed' and state['records']:
         ui.st.warning('最近一次采集失败，当前继续展示上次有效快照，数据可能过期。详情见“数据源状态”。', icon='⚠️')
     elif latest.get('status') == 'failed':

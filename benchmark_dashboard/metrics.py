@@ -6,6 +6,7 @@ an explanation must not silently change how the acquisition validates a field.
 from dataclasses import dataclass, replace
 from decimal import Decimal, localcontext, ROUND_HALF_EVEN
 from typing import Any
+from .free_api import snapshot_is_free
 
 
 METRIC_MAPPING_VERSION = 'm2b-metrics-v1'
@@ -13,6 +14,9 @@ PERFORMANCE_PATHS = frozenset({
     'median_output_tokens_per_second',
     'median_time_to_first_token_seconds',
     'median_time_to_first_answer_token',
+    *{f'performance.{key}' for key in ('median_output_tokens_per_second',
+        'median_time_to_first_token_seconds', 'median_time_to_first_answer_token_seconds',
+        'median_end_to_end_response_time_seconds')},
 })
 PERFORMANCE_ZERO_NOTICE = '源站记录为 0，测量含义待确认，暂不用于性能优劣判断'
 VERIFICATION_DATE = '2026-09-19'
@@ -141,6 +145,42 @@ for _path, (_status, _sources) in _VERIFICATION.items():
         METRICS[_path] = _metric
 
 
+FREE_METRICS = {
+    path: METRICS[path] for path in ('evaluations.artificial_analysis_intelligence_index',
+        'pricing.price_1m_input_tokens', 'pricing.price_1m_output_tokens')
+}
+for _key, _label in (
+    ('finance_and_accounting', '财务与会计能力指数'), ('strategy_and_ops', '战略与运营能力指数'),
+    ('legal', '法律能力指数'), ('healthcare_and_medical', '医疗健康能力指数'),
+    ('engineering', '工程能力指数'), ('economics', '经济学能力指数'),
+):
+    _key = f'artificial_analysis_{_key}_index'
+    _metric = _index(_key, _label, _key, '源站行业能力指数原值；各行业指数独立，不合成总分。')
+    FREE_METRICS[_metric.path] = replace(_metric, verification_status='partial', verified_at='2026-11-02',
+        official_sources=('https://artificialanalysis.ai/data-api/docs',))
+for _key, _label, _unit, _direction in (
+    ('median_output_tokens_per_second', '输出速度', 'Token/秒', 'higher'),
+    ('median_time_to_first_token_seconds', '首 Token 延迟', '秒', 'lower'),
+    ('median_time_to_first_answer_token_seconds', '首回答 Token 延迟', '秒', 'lower'),
+    ('median_end_to_end_response_time_seconds', '完整响应耗时（500 回答 Token）', '秒', 'lower'),
+):
+    _path = f'performance.{_key}'
+    FREE_METRICS[_path] = Metric(_path, _label, _unit, source_name=_key, raw_unit=_unit,
+        direction=_direction, description='免费接口报告的跨提供商性能中位数；具体测试工作负载未提供，不代表公司渠道实测。',
+        verification_status='confirmed', verified_at='2026-11-02',
+        official_sources=('https://artificialanalysis.ai/data-api/docs/reference',))
+
+
+def display_metrics(snapshot: dict | None = None) -> dict[str, Metric]:
+    """Select a contract-specific dictionary; historical mappings stay intact."""
+    return FREE_METRICS if snapshot_is_free(snapshot) else DISPLAY_METRICS
+
+
+FREE_DEFAULT_METRICS = ['evaluations.artificial_analysis_intelligence_index',
+    'pricing.price_1m_input_tokens', 'pricing.price_1m_output_tokens',
+    *[path for path in FREE_METRICS if path.startswith('performance.')]]
+
+
 def value_at(record: dict, path: str) -> Any:
     value = record
     for part in path.split('.'):
@@ -151,7 +191,7 @@ def value_at(record: dict, path: str) -> Any:
 
 
 def metric_for(path: str) -> Metric:
-    return METRICS.get(path) or DISPLAY_METRICS.get(path) or Metric(
+    return METRICS.get(path) or DISPLAY_METRICS.get(path) or FREE_METRICS.get(path) or Metric(
         path, f'未确认指标（{path}）', '原值 · 口径未确认', confirmed=False, source_name=path)
 
 

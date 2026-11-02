@@ -54,7 +54,10 @@ def metric_context(path: str, record: dict, snapshot: dict) -> dict:
             values[f'{scope}.evaluation_version'] = obj.get('evaluation_version')
             for map_name in ('metric_versions', 'evaluation_versions'):
                 values[f'{scope}.{map_name}'] = _mapped(obj, map_name, path)
-    if path.startswith('median_'):
+    if path == 'evaluations.artificial_analysis_intelligence_index':
+        values['source_metadata.evaluation_version'] = meta.get('intelligence_index_version',
+            values.get('source_metadata.evaluation_version'))
+    if path.startswith(('median_', 'performance.')):
         values['snapshot.prompt_options'] = snapshot.get('prompt_options', meta.get('prompt_options'))
         values['record.prompt_options'] = record.get('prompt_options')
     return values
@@ -126,7 +129,7 @@ def assess_metric(path: str, records: list[dict], snapshots: list[dict]) -> dict
             if not version or not config:
                 reasons.append('评测版本或运行配置源站未提供')
                 break
-    if path.startswith('median_'):
+    if path.startswith(('median_', 'performance.')):
         if not all(_provided(context.get('snapshot.prompt_options')) for context in contexts):
             reasons.append('速度/延迟测试参数源站未提供')
         if any(_provided(value) and (not isinstance(value, dict) or not _valid_config(value))

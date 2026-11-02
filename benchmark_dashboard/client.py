@@ -6,9 +6,9 @@ from collections.abc import Callable
 from typing import Any
 
 import requests
+from .free_api import API_URL, MAX_REQUESTS, ContractError, merge_pages, validate_pages
 
 
-API_URL = "https://artificialanalysis.ai/api/v2/data/llms/models"
 SOURCE = "artificial_analysis"
 
 
@@ -29,12 +29,13 @@ class SourceError(Exception):
         super().__init__(message)
 
 
-def fetch_models(
+def _fetch_page(
     api_key: str,
     *,
     session: requests.Session | None = None,
     sleep: Callable[[float], None] = time.sleep,
     max_attempts: int = 3,
+    page: int = 1,
 ) -> tuple[Any, int, int]:
     """Fetch models, returning ``(payload, HTTP status, attempt count)``.
 
@@ -57,6 +58,7 @@ def fetch_models(
                     headers={"x-api-key": api_key, "Accept": "application/json"},
                     timeout=(10, 45),
                     allow_redirects=False,
+                    params={'page': page},
                 )
             except requests.Timeout:
                 error = SourceError("timeout", "API 请求超时，已达到重试次数上限。", attempts=attempt)
@@ -82,7 +84,9 @@ def fetch_models(
                 if status == 403:
                     raise SourceError("authentication_failed", "API 访问被拒绝（HTTP 403），请检查账号或 API Key 权限。", status, attempt)
                 if status == 429:
-                    error = SourceError("rate_limited", "API 请求频率受限（HTTP 429），请稍后重试。", status, attempt)
+                    raise SourceError("rate_limited", "API 请求额度受限（HTTP 429），本批次停止且不自动重试。", status, attempt)
+                elif status == 410:
+                    raise SourceError("endpoint_retired", "数据接口已停用（HTTP 410），请检查接口迁移。", status, attempt)
                 elif 500 <= status < 600:
                     error = SourceError("upstream_unavailable", "API 服务暂不可用（HTTP 5xx），请稍后重试。", status, attempt)
                 elif 300 <= status < 400:
@@ -98,3 +102,39 @@ def fetch_models(
             client.close()
 
     raise AssertionError("Unreachable retry state.")
+
+
+def fetch_models(api_key: str, *, session: requests.Session | None = None,
+                 sleep: Callable[[float], None] = time.sleep,
+                 max_attempts: int = 3) -> tuple[Any, int, int]:
+    """One complete batch, bounded to ten HTTP requests including retries.
+
+    Daily callers pass max_attempts=1 (one attempt per page). No partial batch
+    is returned. attempts counts actual HTTP requests, including failed pages.
+    """
+    if type(max_attempts) is not int or not 1 <= max_attempts <= 10:
+        raise ValueError('max_attempts 必须是 1 至 10 之间的整数。')
+    client = session if session is not None else requests.Session()
+    pages, requests_made = [], 0
+    try:
+        while requests_made < MAX_REQUESTS:
+            try:
+                payload, status, attempts = _fetch_page(
+                    api_key, session=client, sleep=sleep, page=len(pages) + 1,
+                    max_attempts=min(max_attempts, MAX_REQUESTS - requests_made))
+            except SourceError as error:
+                error.attempts += requests_made
+                raise
+            requests_made += attempts
+            pages.append(payload)
+            try:
+                validate_pages(pages, complete=False)
+                if not payload['pagination']['has_more']:
+                    return merge_pages(pages), status, requests_made
+            except ContractError as error:
+                raise SourceError(error.code, str(error), status, requests_made) from None
+        raise SourceError('request_budget_exceeded', '采集达到 HTTP 请求上限；未发布部分数据。',
+                          attempts=requests_made)
+    finally:
+        if session is None:
+            client.close()
